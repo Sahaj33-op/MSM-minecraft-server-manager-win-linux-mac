@@ -1,0 +1,333 @@
+"""Server lifecycle management for MSM."""
+import logging
+import os
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import psutil
+
+from .db import get_session, Server
+from .console import get_console_manager
+from .exceptions import (
+    ServerNotFoundError,
+    ServerAlreadyRunningError,
+    ServerNotRunningError,
+    JavaNotFoundError,
+)
+from platform_adapters import get_adapter
+
+logger = logging.getLogger(__name__)
+
+# How long to wait for graceful shutdown before force killing
+GRACEFUL_SHUTDOWN_TIMEOUT = 30
+
+
+def start_server(server_id: int) -> bool:
+    """Start a Minecraft server.
+
+    Args:
+        server_id: The database ID of the server to start.
+
+    Returns:
+        True if the server was started successfully.
+
+    Raises:
+        ServerNotFoundError: If the server doesn't exist.
+        ServerAlreadyRunningError: If the server is already running.
+        JavaNotFoundError: If Java is not found on the system.
+    """
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+
+        if not server:
+            raise ServerNotFoundError(server_id)
+
+        if server.is_running:
+            logger.info(f"Server '{server.name}' is already running (PID: {server.pid})")
+            raise ServerAlreadyRunningError(server.name)
+
+        adapter = get_adapter()
+
+        # Get Java path
+        java_path = server.java_path or adapter.get_java_path()
+        if not java_path:
+            logger.error("Java not found on system")
+            raise JavaNotFoundError()
+
+        # Construct command
+        memory_flag = f"-Xmx{server.memory}"
+        jvm_args = server.jvm_args.split() if server.jvm_args else []
+        cmd = [java_path, memory_flag, *jvm_args, "-jar", "server.jar", "nogui"]
+
+        cwd = Path(server.path)
+
+        # Ensure EULA is accepted
+        eula_path = cwd / "eula.txt"
+        if not eula_path.exists():
+            logger.info(f"Creating eula.txt for server '{server.name}'")
+            with open(eula_path, "w") as f:
+                f.write("eula=true\n")
+
+        # Merge with system environment
+        env = {**os.environ}
+
+        try:
+            logger.info(f"Starting server '{server.name}' with command: {' '.join(cmd)}")
+            proc = adapter.start_process(cmd, cwd, env)
+
+            # Register with console manager for I/O handling
+            console_manager = get_console_manager()
+            console_manager.register_process(server.id, proc, cwd)
+
+            server.is_running = True
+            server.pid = proc.pid
+            server.last_started = datetime.utcnow()
+
+            logger.info(f"Server '{server.name}' started with PID {proc.pid}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start server '{server.name}': {e}")
+            raise
+
+
+def stop_server(server_id: int, force: bool = False) -> bool:
+    """Stop a Minecraft server.
+
+    Args:
+        server_id: The database ID of the server to stop.
+        force: If True, forcefully kill the process without graceful shutdown.
+
+    Returns:
+        True if the server was stopped successfully.
+
+    Raises:
+        ServerNotFoundError: If the server doesn't exist.
+        ServerNotRunningError: If the server is not running.
+    """
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+
+        if not server:
+            raise ServerNotFoundError(server_id)
+
+        if not server.is_running or not server.pid:
+            raise ServerNotRunningError(server.name)
+
+        console_manager = get_console_manager()
+        adapter = get_adapter()
+
+        try:
+            logger.info(f"Stopping server '{server.name}' (PID: {server.pid})")
+
+            # Try graceful shutdown first (send "stop" command)
+            if not force:
+                server_proc = console_manager.get_process(server_id)
+                if server_proc and server_proc.send_command("stop"):
+                    logger.info(f"Sent 'stop' command to server '{server.name}'")
+
+                    # Wait for graceful shutdown
+                    start_time = time.time()
+                    while time.time() - start_time < GRACEFUL_SHUTDOWN_TIMEOUT:
+                        if not psutil.pid_exists(server.pid):
+                            break
+                        time.sleep(0.5)
+
+                    if not psutil.pid_exists(server.pid):
+                        logger.info(f"Server '{server.name}' stopped gracefully")
+                        console_manager.unregister_process(server_id)
+                        server.is_running = False
+                        server.pid = None
+                        server.last_stopped = datetime.utcnow()
+                        return True
+
+                    logger.warning(
+                        f"Server '{server.name}' did not stop gracefully after "
+                        f"{GRACEFUL_SHUTDOWN_TIMEOUT}s, forcing..."
+                    )
+
+            # Force stop
+            if adapter.stop_process(server.pid):
+                console_manager.unregister_process(server_id)
+                server.is_running = False
+                server.pid = None
+                server.last_stopped = datetime.utcnow()
+                logger.info(f"Server '{server.name}' stopped")
+                return True
+            else:
+                logger.warning(f"Failed to stop server '{server.name}'")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error stopping server '{server.name}': {e}")
+            raise
+
+
+def restart_server(server_id: int) -> bool:
+    """Restart a Minecraft server.
+
+    Args:
+        server_id: The database ID of the server to restart.
+
+    Returns:
+        True if the server was restarted successfully.
+    """
+    try:
+        stop_server(server_id)
+    except ServerNotRunningError:
+        pass  # Server wasn't running, that's fine
+
+    return start_server(server_id)
+
+
+def get_server_status(server_id: int) -> dict:
+    """Get the current status of a server.
+
+    Args:
+        server_id: The database ID of the server.
+
+    Returns:
+        Dictionary with server status information.
+    """
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+
+        if not server:
+            raise ServerNotFoundError(server_id)
+
+        status = {
+            "id": server.id,
+            "name": server.name,
+            "type": server.type,
+            "version": server.version,
+            "port": server.port,
+            "is_running": server.is_running,
+            "pid": server.pid,
+            "memory": server.memory,
+            "last_started": server.last_started.isoformat() if server.last_started else None,
+            "last_stopped": server.last_stopped.isoformat() if server.last_stopped else None,
+        }
+
+        # Get process stats if running
+        if server.is_running and server.pid:
+            try:
+                proc = psutil.Process(server.pid)
+                with proc.oneshot():
+                    status["process"] = {
+                        "cpu_percent": proc.cpu_percent(),
+                        "memory_rss": proc.memory_info().rss,
+                        "status": proc.status(),
+                        "uptime": (datetime.utcnow() - datetime.fromtimestamp(proc.create_time())).total_seconds(),
+                    }
+            except psutil.NoSuchProcess:
+                # Process died, update status
+                server.is_running = False
+                server.pid = None
+                status["is_running"] = False
+                status["pid"] = None
+
+        return status
+
+
+def sync_server_states() -> int:
+    """Reconcile database state with actual running processes.
+
+    This should be called on startup to fix any stale state from
+    crashes or unexpected shutdowns.
+
+    Returns:
+        Number of servers whose state was corrected.
+    """
+    corrected = 0
+
+    with get_session() as session:
+        servers = session.query(Server).filter(Server.is_running == True).all()
+
+        for server in servers:
+            if server.pid:
+                if not psutil.pid_exists(server.pid):
+                    logger.warning(
+                        f"Server '{server.name}' marked as running but PID {server.pid} doesn't exist. "
+                        "Correcting state."
+                    )
+                    server.is_running = False
+                    server.pid = None
+                    corrected += 1
+                else:
+                    # Verify it's actually our Java process
+                    try:
+                        proc = psutil.Process(server.pid)
+                        if "java" not in proc.name().lower():
+                            logger.warning(
+                                f"Server '{server.name}' PID {server.pid} is not a Java process. "
+                                "Correcting state."
+                            )
+                            server.is_running = False
+                            server.pid = None
+                            corrected += 1
+                    except psutil.NoSuchProcess:
+                        server.is_running = False
+                        server.pid = None
+                        corrected += 1
+            else:
+                # is_running=True but no PID, invalid state
+                logger.warning(f"Server '{server.name}' marked as running but has no PID. Correcting state.")
+                server.is_running = False
+                corrected += 1
+
+    if corrected > 0:
+        logger.info(f"Corrected state for {corrected} server(s)")
+
+    return corrected
+
+
+def send_command(server_id: int, command: str) -> bool:
+    """Send a command to a running server's console.
+
+    Args:
+        server_id: The database ID of the server.
+        command: The command to send.
+
+    Returns:
+        True if the command was sent successfully.
+
+    Raises:
+        ServerNotFoundError: If the server doesn't exist.
+        ServerNotRunningError: If the server is not running.
+    """
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+
+        if not server:
+            raise ServerNotFoundError(server_id)
+
+        if not server.is_running:
+            raise ServerNotRunningError(server.name)
+
+    console_manager = get_console_manager()
+    return console_manager.send_command(server_id, command)
+
+
+def get_console_history(server_id: int, limit: int = 100) -> list:
+    """Get console history for a server.
+
+    Args:
+        server_id: The database ID of the server.
+        limit: Maximum number of lines to return.
+
+    Returns:
+        List of console line entries.
+
+    Raises:
+        ServerNotFoundError: If the server doesn't exist.
+    """
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+
+        if not server:
+            raise ServerNotFoundError(server_id)
+
+    console_manager = get_console_manager()
+    return console_manager.get_history(server_id, limit)

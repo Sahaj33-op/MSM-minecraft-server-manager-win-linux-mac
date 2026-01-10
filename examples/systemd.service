@@ -1,0 +1,12 @@
+[Unit]
+Description=Minecraft Server Manager
+After=network.target
+
+[Service]
+Type=simple
+User=msm
+ExecStart=/usr/local/bin/msh web start --host 0.0.0.0 --port 5000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
