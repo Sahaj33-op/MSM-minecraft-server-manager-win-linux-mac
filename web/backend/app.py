@@ -383,3 +383,414 @@ async def console_websocket(websocket: WebSocket, server_id: int):
     - {"type": "ping"} - Ping for pong response
     """
     await handle_console_websocket(websocket, server_id)
+
+
+# ============================================================================
+# Backup Endpoints
+# ============================================================================
+
+class CreateBackupRequest(BaseModel):
+    stop_first: bool = False
+    backup_type: str = "manual"
+
+
+@app.get("/api/v1/backups", tags=["Backups"])
+def list_all_backups():
+    """List all backups."""
+    from msm_core.backups import list_backups
+    return list_backups()
+
+
+@app.get("/api/v1/servers/{server_id}/backups", tags=["Backups"])
+def list_server_backups(server_id: int):
+    """List backups for a specific server."""
+    from msm_core.backups import list_backups
+
+    server = api.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+    return list_backups(server_id)
+
+
+@app.post("/api/v1/servers/{server_id}/backups", tags=["Backups"])
+def create_backup(server_id: int, req: CreateBackupRequest = None):
+    """Create a backup of a server."""
+    from msm_core.backups import create_backup as do_create_backup
+
+    try:
+        server = api.get_server_by_id(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+        req = req or CreateBackupRequest()
+        result = do_create_backup(
+            server_id=server_id,
+            stop_first=req.stop_first,
+            backup_type=req.backup_type,
+        )
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/backups/{backup_id}", tags=["Backups"])
+def get_backup(backup_id: int):
+    """Get backup details."""
+    from msm_core.backups import get_backup_by_id
+
+    backup = get_backup_by_id(backup_id)
+    if not backup:
+        raise HTTPException(status_code=404, detail=f"Backup {backup_id} not found")
+    return backup
+
+
+@app.post("/api/v1/backups/{backup_id}/restore", tags=["Backups"])
+def restore_backup(backup_id: int):
+    """Restore a server from backup."""
+    from msm_core.backups import restore_backup as do_restore
+
+    try:
+        do_restore(backup_id)
+        return {"status": "restored", "backup_id": backup_id}
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.delete("/api/v1/backups/{backup_id}", tags=["Backups"])
+def delete_backup(backup_id: int, delete_file: bool = True):
+    """Delete a backup."""
+    from msm_core.backups import delete_backup as do_delete
+
+    try:
+        do_delete(backup_id, delete_file=delete_file)
+        return {"status": "deleted", "backup_id": backup_id}
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.post("/api/v1/backups/prune", tags=["Backups"])
+def prune_backups(server_id: Optional[int] = None, keep_count: int = 5, keep_days: Optional[int] = None):
+    """Prune old backups."""
+    from msm_core.backups import prune_backups as do_prune
+
+    deleted = do_prune(server_id, keep_count=keep_count, keep_days=keep_days)
+    return {"deleted_count": deleted}
+
+
+# ============================================================================
+# Plugin Endpoints
+# ============================================================================
+
+class InstallPluginRequest(BaseModel):
+    source: str  # modrinth, hangar, url
+    project_id: Optional[str] = None
+    url: Optional[str] = None
+    version_id: Optional[str] = None
+
+
+@app.get("/api/v1/plugins/search", tags=["Plugins"])
+def search_plugins(query: str, source: str = "modrinth", mc_version: Optional[str] = None, limit: int = 10):
+    """Search for plugins on Modrinth or Hangar."""
+    from msm_core.plugins import search_modrinth, search_hangar
+
+    try:
+        if source == "modrinth":
+            return search_modrinth(query, mc_version=mc_version, limit=limit)
+        elif source == "hangar":
+            return search_hangar(query, mc_version=mc_version, limit=limit)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown source: {source}")
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/servers/{server_id}/plugins", tags=["Plugins"])
+def list_server_plugins(server_id: int):
+    """List installed plugins for a server."""
+    from msm_core.plugins import list_plugins
+
+    server = api.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+    return list_plugins(server_id)
+
+
+@app.post("/api/v1/servers/{server_id}/plugins", tags=["Plugins"])
+def install_plugin(server_id: int, req: InstallPluginRequest):
+    """Install a plugin on a server."""
+    from msm_core.plugins import install_from_modrinth, install_from_url
+
+    try:
+        server = api.get_server_by_id(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+        if req.source == "modrinth" and req.project_id:
+            result = install_from_modrinth(
+                server_id=server_id,
+                project_id=req.project_id,
+                version_id=req.version_id,
+                mc_version=server["version"],
+            )
+        elif req.source == "url" and req.url:
+            result = install_from_url(server_id=server_id, url=req.url)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid installation request")
+
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/plugins/{plugin_id}", tags=["Plugins"])
+def get_plugin(plugin_id: int):
+    """Get plugin details."""
+    from msm_core.plugins import get_plugin_by_id
+
+    plugin = get_plugin_by_id(plugin_id)
+    if not plugin:
+        raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+    return plugin
+
+
+@app.delete("/api/v1/plugins/{plugin_id}", tags=["Plugins"])
+def uninstall_plugin(plugin_id: int, delete_file: bool = True):
+    """Uninstall a plugin."""
+    from msm_core.plugins import uninstall_plugin as do_uninstall
+
+    try:
+        do_uninstall(plugin_id, delete_file=delete_file)
+        return {"status": "uninstalled", "plugin_id": plugin_id}
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.post("/api/v1/plugins/{plugin_id}/enable", tags=["Plugins"])
+def enable_plugin(plugin_id: int):
+    """Enable a disabled plugin."""
+    from msm_core.plugins import toggle_plugin
+
+    try:
+        result = toggle_plugin(plugin_id, enabled=True)
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.post("/api/v1/plugins/{plugin_id}/disable", tags=["Plugins"])
+def disable_plugin(plugin_id: int):
+    """Disable a plugin."""
+    from msm_core.plugins import toggle_plugin
+
+    try:
+        result = toggle_plugin(plugin_id, enabled=False)
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/servers/{server_id}/plugins/updates", tags=["Plugins"])
+def check_plugin_updates(server_id: int):
+    """Check for plugin updates."""
+    from msm_core.plugins import check_plugin_updates as do_check
+
+    try:
+        server = api.get_server_by_id(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+        return do_check(server_id)
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+# ============================================================================
+# Schedule Endpoints
+# ============================================================================
+
+class CreateScheduleRequest(BaseModel):
+    action: str
+    cron: str
+    payload: Optional[str] = None
+    enabled: bool = True
+
+
+class UpdateScheduleRequest(BaseModel):
+    cron: Optional[str] = None
+    enabled: Optional[bool] = None
+    payload: Optional[str] = None
+
+
+@app.get("/api/v1/schedules", tags=["Schedules"])
+def list_all_schedules():
+    """List all schedules."""
+    from msm_core.scheduler import list_schedules
+    return list_schedules()
+
+
+@app.get("/api/v1/servers/{server_id}/schedules", tags=["Schedules"])
+def list_server_schedules(server_id: int):
+    """List schedules for a specific server."""
+    from msm_core.scheduler import list_schedules
+
+    server = api.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+    return list_schedules(server_id)
+
+
+@app.post("/api/v1/servers/{server_id}/schedules", tags=["Schedules"])
+def create_schedule(server_id: int, req: CreateScheduleRequest):
+    """Create a new schedule."""
+    from msm_core.scheduler import create_schedule as do_create
+
+    try:
+        server = api.get_server_by_id(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
+
+        result = do_create(
+            server_id=server_id,
+            action=req.action,
+            cron_expr=req.cron,
+            payload=req.payload,
+            enabled=req.enabled,
+        )
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/schedules/{schedule_id}", tags=["Schedules"])
+def get_schedule(schedule_id: int):
+    """Get schedule details."""
+    from msm_core.scheduler import get_schedule_by_id
+
+    schedule = get_schedule_by_id(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail=f"Schedule {schedule_id} not found")
+    return schedule
+
+
+@app.patch("/api/v1/schedules/{schedule_id}", tags=["Schedules"])
+def update_schedule(schedule_id: int, req: UpdateScheduleRequest):
+    """Update a schedule."""
+    from msm_core.scheduler import update_schedule as do_update
+
+    try:
+        result = do_update(
+            schedule_id=schedule_id,
+            cron_expr=req.cron,
+            enabled=req.enabled,
+            payload=req.payload,
+        )
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.delete("/api/v1/schedules/{schedule_id}", tags=["Schedules"])
+def delete_schedule(schedule_id: int):
+    """Delete a schedule."""
+    from msm_core.scheduler import delete_schedule as do_delete
+
+    try:
+        do_delete(schedule_id)
+        return {"status": "deleted", "schedule_id": schedule_id}
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+# ============================================================================
+# Java Endpoints
+# ============================================================================
+
+@app.get("/api/v1/java/installed", tags=["Java"])
+def list_installed_java():
+    """List installed Java runtimes."""
+    from msm_core.java_manager import detect_installed_javas
+    return detect_installed_javas()
+
+
+@app.get("/api/v1/java/managed", tags=["Java"])
+def list_managed_java():
+    """List MSM-managed Java installations."""
+    from msm_core.java_manager import get_managed_javas
+    return get_managed_javas()
+
+
+@app.get("/api/v1/java/available", tags=["Java"])
+def list_available_java():
+    """List available Java versions for download."""
+    from msm_core.java_manager import get_available_java_versions
+
+    try:
+        return get_available_java_versions()
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.post("/api/v1/java/install/{version}", tags=["Java"])
+def install_java(version: int):
+    """Download and install a Java runtime."""
+    from msm_core.java_manager import download_java
+
+    try:
+        result = download_java(version)
+        return result
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/java/recommend/{mc_version}", tags=["Java"])
+def recommend_java(mc_version: str):
+    """Get recommended Java for a Minecraft version."""
+    from msm_core.java_manager import detect_installed_javas, get_best_java_for_version
+
+    javas = detect_installed_javas()
+    best = get_best_java_for_version(mc_version, javas)
+
+    if best:
+        return {"recommended": best, "mc_version": mc_version}
+    else:
+        return {"recommended": None, "mc_version": mc_version, "message": "No compatible Java found"}
+
+
+# ============================================================================
+# Server Properties Endpoints
+# ============================================================================
+
+class UpdatePropertiesRequest(BaseModel):
+    properties: dict
+
+
+@app.get("/api/v1/servers/{server_id}/properties", tags=["Configuration"])
+def get_server_properties(server_id: int):
+    """Get server.properties for a server."""
+    from msm_core.config_editor import get_server_properties as do_get
+
+    try:
+        return do_get(server_id)
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.patch("/api/v1/servers/{server_id}/properties", tags=["Configuration"])
+def update_server_properties(server_id: int, req: UpdatePropertiesRequest):
+    """Update server.properties for a server."""
+    from msm_core.config_editor import update_server_properties as do_update
+
+    try:
+        return do_update(server_id, req.properties)
+    except MSMError as e:
+        raise handle_msm_error(e)
+
+
+@app.get("/api/v1/properties/schema", tags=["Configuration"])
+def get_properties_schema():
+    """Get the server.properties schema with types and defaults."""
+    from msm_core.config_editor import get_property_schema
+    return get_property_schema()
