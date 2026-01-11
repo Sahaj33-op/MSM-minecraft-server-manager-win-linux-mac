@@ -439,7 +439,9 @@ def get_managed_javas() -> List[Dict]:
         List of managed Java installations.
     """
     config = get_config()
-    java_dir = Path(config.servers_dir) / "_java"
+    # Use data_dir from config, expand ~ to home directory
+    data_dir = Path(config.data_dir).expanduser()
+    java_dir = data_dir / "java"
 
     if not java_dir.exists():
         return []

@@ -325,38 +325,50 @@ def install_server(name: str, server_type: str, version: str, install_dir: Path)
         raise UnsupportedServerTypeError(server_type)
 
 
-def get_available_versions(server_type: str) -> list:
+def get_available_versions(server_type: str, include_snapshots: bool = False) -> list:
     """Get available versions for a server type.
 
     Args:
         server_type: Type of server.
+        include_snapshots: Whether to include snapshot/unstable versions.
 
     Returns:
-        List of available version strings.
+        List of available version strings (newest first).
     """
     try:
         if server_type == "paper":
             response = requests.get(f"{PAPER_API}/projects/paper", timeout=TIMEOUT)
             response.raise_for_status()
-            return response.json().get("versions", [])
+            versions = response.json().get("versions", [])
+            # Paper versions are release versions only, return newest first
+            return list(reversed(versions))
 
         elif server_type == "vanilla":
             response = requests.get(MOJANG_VERSION_MANIFEST, timeout=TIMEOUT)
             response.raise_for_status()
             manifest = response.json()
-            # Return release versions only by default
-            return [v["id"] for v in manifest["versions"] if v["type"] == "release"]
+            if include_snapshots:
+                # Return all versions (release + snapshot)
+                return [v["id"] for v in manifest["versions"]]
+            else:
+                # Return release versions only
+                return [v["id"] for v in manifest["versions"] if v["type"] == "release"]
 
         elif server_type == "fabric":
             response = requests.get(f"{FABRIC_META}/versions/game", timeout=TIMEOUT)
             response.raise_for_status()
             versions = response.json()
-            return [v["version"] for v in versions if v.get("stable", False)]
+            if include_snapshots:
+                return [v["version"] for v in versions]
+            else:
+                return [v["version"] for v in versions if v.get("stable", False)]
 
         elif server_type == "purpur":
             response = requests.get(f"{PURPUR_API}/purpur", timeout=TIMEOUT)
             response.raise_for_status()
-            return response.json().get("versions", [])
+            versions = response.json().get("versions", [])
+            # Purpur versions are release versions only, return newest first
+            return list(reversed(versions))
 
         else:
             return []
@@ -364,3 +376,37 @@ def get_available_versions(server_type: str) -> list:
     except Exception as e:
         logger.error(f"Failed to fetch versions for {server_type}: {e}")
         return []
+
+
+def get_server_types() -> list:
+    """Get available server types with metadata.
+
+    Returns:
+        List of server type info dictionaries.
+    """
+    return [
+        {
+            "id": "paper",
+            "name": "Paper",
+            "description": "High performance Spigot fork with optimizations",
+            "supports_snapshots": False,
+        },
+        {
+            "id": "vanilla",
+            "name": "Vanilla",
+            "description": "Official Minecraft server from Mojang",
+            "supports_snapshots": True,
+        },
+        {
+            "id": "fabric",
+            "name": "Fabric",
+            "description": "Lightweight modding platform",
+            "supports_snapshots": True,
+        },
+        {
+            "id": "purpur",
+            "name": "Purpur",
+            "description": "Paper fork with extra features and configurability",
+            "supports_snapshots": False,
+        },
+    ]

@@ -34,9 +34,20 @@ class WindowsAdapter(PlatformAdapter):
     def stop_process(self, pid: int) -> bool:
         try:
             proc = psutil.Process(pid)
+            # First try graceful terminate
             proc.terminate()
+            try:
+                # Wait up to 5 seconds for graceful termination
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                # Force kill if still running
+                proc.kill()
+                proc.wait(timeout=5)
             return True
         except psutil.NoSuchProcess:
+            # Process already gone
+            return True
+        except Exception:
             return False
 
     def create_background_service(self, name: str, exec_cmd: str) -> bool:

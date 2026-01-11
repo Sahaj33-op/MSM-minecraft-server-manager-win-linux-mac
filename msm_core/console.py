@@ -1,8 +1,8 @@
 """Console management for MSM - handles process I/O streaming."""
-import asyncio
 import logging
 import subprocess
 import threading
+import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -83,17 +83,27 @@ class ConsoleBuffer:
 class ServerProcess:
     """Wrapper for a running server process with I/O handling."""
 
-    def __init__(self, server_id: int, process: subprocess.Popen, cwd: Path):
+    def __init__(
+        self,
+        server_id: int,
+        process: subprocess.Popen,
+        cwd: Path,
+        on_exit: Optional[Callable[[int, int], None]] = None,
+    ):
         self.server_id = server_id
         self.process = process
         self.cwd = cwd
         self.buffer = ConsoleBuffer(server_id)
         self._stdout_thread: Optional[threading.Thread] = None
         self._stderr_thread: Optional[threading.Thread] = None
+        self._monitor_thread: Optional[threading.Thread] = None
         self._running = False
+        self._on_exit = on_exit  # Callback: (server_id, exit_code) -> None
+        self._exit_handled = False
+        self._exit_lock = threading.Lock()
 
     def start_io_threads(self) -> None:
-        """Start threads to read stdout and stderr."""
+        """Start threads to read stdout, stderr, and monitor process."""
         self._running = True
 
         if self.process.stdout:
@@ -101,6 +111,7 @@ class ServerProcess:
                 target=self._read_stream,
                 args=(self.process.stdout, "stdout"),
                 daemon=True,
+                name=f"server-{self.server_id}-stdout",
             )
             self._stdout_thread.start()
 
@@ -109,8 +120,17 @@ class ServerProcess:
                 target=self._read_stream,
                 args=(self.process.stderr, "stderr"),
                 daemon=True,
+                name=f"server-{self.server_id}-stderr",
             )
             self._stderr_thread.start()
+
+        # Start process monitor thread
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_process,
+            daemon=True,
+            name=f"server-{self.server_id}-monitor",
+        )
+        self._monitor_thread.start()
 
     def _read_stream(self, stream, stream_name: str) -> None:
         """Read from a stream and add lines to buffer."""
@@ -127,6 +147,38 @@ class ServerProcess:
                 stream.close()
             except Exception:
                 pass
+
+    def _monitor_process(self) -> None:
+        """Monitor the process and call exit callback when it terminates."""
+        while self._running:
+            exit_code = self.process.poll()
+            if exit_code is not None:
+                # Process has terminated
+                self._handle_exit(exit_code)
+                break
+            time.sleep(0.5)  # Check every 500ms
+
+    def _handle_exit(self, exit_code: int) -> None:
+        """Handle process exit - call callback exactly once."""
+        with self._exit_lock:
+            if self._exit_handled:
+                return
+            self._exit_handled = True
+
+        logger.info(f"Server {self.server_id} process exited with code {exit_code}")
+
+        # Add exit message to console
+        self.buffer.add_line(
+            f"[MSM] Server process exited with code {exit_code}",
+            "system"
+        )
+
+        # Call exit callback
+        if self._on_exit:
+            try:
+                self._on_exit(self.server_id, exit_code)
+            except Exception as e:
+                logger.error(f"Error in exit callback for server {self.server_id}: {e}")
 
     def send_command(self, command: str) -> bool:
         """Send a command to the server stdin.
@@ -181,7 +233,25 @@ class ConsoleManager:
         if self._initialized:
             return
         self._processes: Dict[int, ServerProcess] = {}
+        self._exit_callbacks: List[Callable[[int, int], None]] = []
         self._initialized = True
+
+    def register_exit_callback(self, callback: Callable[[int, int], None]) -> None:
+        """Register a callback to be called when any server process exits.
+
+        Args:
+            callback: Function taking (server_id, exit_code).
+        """
+        self._exit_callbacks.append(callback)
+
+    def _on_process_exit(self, server_id: int, exit_code: int) -> None:
+        """Internal handler for process exit."""
+        # Call all registered exit callbacks
+        for callback in self._exit_callbacks:
+            try:
+                callback(server_id, exit_code)
+            except Exception as e:
+                logger.error(f"Error in exit callback: {e}")
 
     def register_process(
         self,
@@ -204,7 +274,12 @@ class ConsoleManager:
             old = self._processes[server_id]
             old.stop()
 
-        server_proc = ServerProcess(server_id, process, cwd)
+        server_proc = ServerProcess(
+            server_id,
+            process,
+            cwd,
+            on_exit=self._on_process_exit,
+        )
         server_proc.start_io_threads()
         self._processes[server_id] = server_proc
 

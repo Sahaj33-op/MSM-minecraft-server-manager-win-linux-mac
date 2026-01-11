@@ -39,6 +39,17 @@ class ServerNotRunningError(ServerError):
         super().__init__(f"Server is not running: {name}")
 
 
+class PortInUseError(ServerError):
+    """Raised when a server's port is already in use."""
+    def __init__(self, port: int, pid: int | None = None):
+        self.port = port
+        self.pid = pid
+        msg = f"Port {port} is already in use"
+        if pid:
+            msg += f" by process {pid}"
+        super().__init__(msg)
+
+
 class JavaError(MSMError):
     """Base exception for Java-related errors."""
     pass

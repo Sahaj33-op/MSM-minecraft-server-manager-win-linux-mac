@@ -1,10 +1,11 @@
 """Server lifecycle management for MSM."""
 import logging
 import os
+import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import psutil
 
@@ -15,6 +16,7 @@ from .exceptions import (
     ServerAlreadyRunningError,
     ServerNotRunningError,
     JavaNotFoundError,
+    PortInUseError,
 )
 from platform_adapters import get_adapter
 
@@ -22,6 +24,32 @@ logger = logging.getLogger(__name__)
 
 # How long to wait for graceful shutdown before force killing
 GRACEFUL_SHUTDOWN_TIMEOUT = 30
+
+
+def check_port_available(port: int) -> Tuple[bool, Optional[int]]:
+    """Check if a port is available for use.
+
+    Args:
+        port: The port number to check.
+
+    Returns:
+        Tuple of (is_available, pid_using_port).
+    """
+    # First try to bind to the port
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", port))
+            return True, None
+    except OSError:
+        pass
+
+    # Port is in use, try to find the PID
+    for conn in psutil.net_connections(kind="inet"):
+        if conn.laddr.port == port and conn.status == "LISTEN":
+            return False, conn.pid
+
+    return False, None
 
 
 def start_server(server_id: int) -> bool:
@@ -47,6 +75,12 @@ def start_server(server_id: int) -> bool:
         if server.is_running:
             logger.info(f"Server '{server.name}' is already running (PID: {server.pid})")
             raise ServerAlreadyRunningError(server.name)
+
+        # Check if port is available before trying to start
+        port_available, blocking_pid = check_port_available(server.port)
+        if not port_available:
+            logger.error(f"Port {server.port} is already in use by PID {blocking_pid}")
+            raise PortInUseError(server.port, blocking_pid)
 
         adapter = get_adapter()
 
@@ -331,3 +365,37 @@ def get_console_history(server_id: int, limit: int = 100) -> list:
 
     console_manager = get_console_manager()
     return console_manager.get_history(server_id, limit)
+
+
+def _on_server_process_exit(server_id: int, exit_code: int) -> None:
+    """Callback invoked when a server process terminates.
+
+    This updates the database to reflect that the server is no longer running.
+
+    Args:
+        server_id: The server database ID.
+        exit_code: The process exit code.
+    """
+    logger.info(f"Server {server_id} process exited with code {exit_code}, updating database")
+
+    with get_session() as session:
+        server = session.query(Server).filter(Server.id == server_id).first()
+        if server:
+            server.is_running = False
+            server.pid = None
+            server.last_stopped = datetime.utcnow()
+            logger.info(f"Server '{server.name}' marked as stopped in database")
+
+    # Clean up the process from console manager
+    console_manager = get_console_manager()
+    console_manager.unregister_process(server_id)
+
+
+def initialize_process_monitoring() -> None:
+    """Initialize process monitoring by registering the exit callback.
+
+    This should be called once at application startup.
+    """
+    console_manager = get_console_manager()
+    console_manager.register_exit_callback(_on_server_process_exit)
+    logger.info("Process monitoring initialized")

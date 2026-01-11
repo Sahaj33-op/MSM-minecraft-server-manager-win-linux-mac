@@ -1,6 +1,8 @@
 import os
 import shutil
+import signal
 import subprocess
+import time
 import psutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,9 +33,22 @@ class LinuxAdapter(PlatformAdapter):
 
     def stop_process(self, pid: int) -> bool:
         try:
-            os.kill(pid, 15) # SIGTERM
+            proc = psutil.Process(pid)
+            # First try graceful SIGTERM
+            os.kill(pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                # Force kill with SIGKILL
+                os.kill(pid, signal.SIGKILL)
+                proc.wait(timeout=5)
+            return True
+        except psutil.NoSuchProcess:
+            # Process already gone
             return True
         except ProcessLookupError:
+            return True
+        except Exception:
             return False
 
     def create_background_service(self, name: str, exec_cmd: str) -> bool:

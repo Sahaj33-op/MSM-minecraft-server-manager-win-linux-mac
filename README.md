@@ -15,7 +15,7 @@ MSM simplifies hosting and managing local Minecraft servers. Whether you prefer 
 | Feature | Description |
 |---------|-------------|
 | **Cross-Platform** | Native support for Windows, Linux, and macOS with platform-specific optimizations |
-| **Web Dashboard** | Modern React interface with real-time server monitoring and console streaming |
+| **Web Dashboard** | Modern dark-themed React interface with real-time server monitoring and console streaming |
 | **CLI (`msh`)** | Full-featured command-line interface for automation and scripting |
 | **Multi-Server** | Manage multiple Minecraft servers from a single installation |
 | **Server Types** | Support for Paper, Fabric, Vanilla, Purpur, and other server distributions |
@@ -24,7 +24,8 @@ MSM simplifies hosting and managing local Minecraft servers. Whether you prefer 
 | **Scheduler** | Cron-based task scheduling for backups, restarts, and commands |
 | **Java Manager** | Auto-detect installed Java runtimes and download from Adoptium |
 | **Monitoring** | Live CPU/RAM usage tracking and server console output |
-| **API** | RESTful API with optional authentication for custom integrations |
+| **Robustness** | Automatic state recovery, WebSocket auto-reconnect, and comprehensive error handling |
+| **API** | RESTful API with health checks and optional authentication for custom integrations |
 
 ## Requirements
 
@@ -232,15 +233,19 @@ msm/
 ├── msm_core/               # Core business logic (OS-agnostic)
 │   ├── api.py              # Core API for CLI and web
 │   ├── lifecycle.py        # Server process management
+│   ├── console.py          # Console I/O and process monitoring
+│   ├── background.py       # Background tasks and state sync
 │   ├── installers.py       # Server JAR downloading
 │   ├── backups.py          # Backup system
 │   ├── plugins.py          # Plugin manager (Modrinth/Hangar)
 │   ├── scheduler.py        # Cron-based task scheduler
 │   ├── java_manager.py     # Java runtime management
 │   ├── config_editor.py    # server.properties editor
+│   ├── monitor.py          # System resource monitoring
 │   ├── services.py         # Platform service management
 │   ├── db.py               # SQLite database
-│   └── config.py           # Configuration persistence
+│   ├── config.py           # Configuration persistence
+│   └── exceptions.py       # Custom exception classes
 ├── platform_adapters/      # Platform-specific implementations
 │   ├── base.py             # Abstract base class
 │   ├── windows_adapter.py  # Windows support
@@ -252,8 +257,13 @@ msm/
 │   ├── backend/            # FastAPI REST API + WebSocket
 │   │   ├── app.py          # API endpoints
 │   │   ├── auth.py         # API authentication
-│   │   └── ws_console.py   # Console WebSocket
-│   └── frontend/           # React + Vite dashboard
+│   │   └── ws_console.py   # Console WebSocket with auto-reconnect
+│   └── frontend/           # React + Vite + TailwindCSS dashboard
+│       └── src/
+│           ├── components/ # Reusable UI components
+│           ├── pages/      # Page components
+│           ├── hooks/      # Custom React hooks
+│           └── types/      # TypeScript type definitions
 └── tests/                  # Unit and integration tests
 ```
 

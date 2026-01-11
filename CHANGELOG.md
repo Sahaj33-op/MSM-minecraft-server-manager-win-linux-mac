@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-11
+
+### Added
+
+#### Robustness & Reliability
+- **Background Task Manager** - Periodic state sync every 10 seconds
+- **Dead Console Cleanup** - Automatic cleanup of stale console entries every 30 seconds
+- **Port Conflict Detection** - Pre-start port availability checking with process identification
+- **Process Monitoring** - Automatic detection when servers stop via console commands
+- **Exit Callbacks** - Database auto-update when server processes terminate
+- **Graceful Shutdown** - Proper cleanup of all background tasks on application exit
+
+#### WebSocket Improvements
+- Auto-reconnect with exponential backoff (up to 5 attempts)
+- Server stopped notification handling
+- Heartbeat keep-alive support
+- Connection state tracking
+- Intentional vs unintentional disconnect handling
+
+#### API Resilience
+- `fetchWithRetry` helper with configurable retry attempts
+- Exponential backoff between retries
+- Graceful degradation on network errors
+- Health check endpoint with uptime tracking
+
+### Changed
+
+#### Modern Dark UI Theme
+- Deeper black color palette (#0a0a0f background)
+- Subtle ambient glow effects with radial gradients
+- Glassmorphism card effects with backdrop blur
+- Modern button animations (lift, glow, gradient overlay)
+- Staggered card entrance animations
+- Pulsing status indicators for online servers
+- Progress bar glow effects for warning/critical levels
+- Minimalistic sidebar with server status indicator
+- Compact stats bar with vertical dividers
+- Thinner scrollbars with transparent tracks
+- Updated typography with tighter letter-spacing
+
+#### UI Components
+- ServerCard with running state indicator bar
+- StatsBar with loading skeleton state
+- Sidebar with live server status dot
+- Dashboard with staggered card animations
+- Improved button hover/active states
+
+### Fixed
+- Port conflict crashes on server start
+- Server status not updating when stopped via `/stop` command
+- WebSocket disconnects not triggering reconnection
+- Memory leak in console output subscriptions
+- Race conditions in process monitoring
+
+### Technical
+- Added `PortInUseError` exception class
+- Added `background.py` module for periodic tasks
+- Enhanced platform adapters with proper process wait on stop
+- Improved WebSocket manager with loop tracking
+- Added comprehensive TypeScript types for console messages
+
 ## [0.2.0] - 2025-01-11
 
 ### Added

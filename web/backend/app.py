@@ -1,6 +1,9 @@
 """MSM Web Backend - FastAPI Application."""
 import logging
+import signal
+import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,6 +20,11 @@ from msm_core.lifecycle import (
     get_server_status,
     send_command,
     get_console_history,
+    initialize_process_monitoring,
+)
+from msm_core.background import (
+    initialize_background_tasks,
+    shutdown_background_tasks,
 )
 from msm_core.monitor import get_system_stats, get_process_stats
 from msm_core.exceptions import (
@@ -24,11 +32,15 @@ from msm_core.exceptions import (
     ServerNotFoundError,
     ServerAlreadyRunningError,
     ServerNotRunningError,
+    PortInUseError,
     ValidationError,
 )
 from .ws_console import handle_console_websocket
 
 logger = logging.getLogger(__name__)
+
+# Track startup time for health checks
+_startup_time: Optional[datetime] = None
 
 
 # ============================================================================
@@ -38,16 +50,54 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown."""
+    global _startup_time
+
     # Startup
+    logger.info("=" * 60)
     logger.info("MSM API starting up...")
-    corrected = sync_server_states()
-    if corrected > 0:
-        logger.info(f"Corrected state for {corrected} server(s)")
+    logger.info("=" * 60)
+
+    _startup_time = datetime.utcnow()
+
+    try:
+        # Initialize process monitoring (detects when servers stop)
+        initialize_process_monitoring()
+        logger.info("✓ Process monitoring initialized")
+
+        # Sync server states with running processes
+        corrected = sync_server_states()
+        if corrected > 0:
+            logger.info(f"✓ Corrected state for {corrected} server(s)")
+        else:
+            logger.info("✓ Server states verified")
+
+        # Start background tasks (periodic state sync, cleanup)
+        initialize_background_tasks()
+        logger.info("✓ Background tasks started")
+
+        logger.info("=" * 60)
+        logger.info("MSM API ready to serve requests")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Failed to initialize MSM API: {e}")
+        raise
 
     yield
 
     # Shutdown
+    logger.info("=" * 60)
     logger.info("MSM API shutting down...")
+    logger.info("=" * 60)
+
+    try:
+        # Stop background tasks
+        shutdown_background_tasks()
+        logger.info("✓ Background tasks stopped")
+
+        logger.info("MSM API shutdown complete")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
 
 # Create FastAPI app
@@ -125,6 +175,8 @@ def handle_msm_error(e: MSMError) -> HTTPException:
     """Convert MSM exceptions to HTTP exceptions."""
     if isinstance(e, ServerNotFoundError):
         return HTTPException(status_code=404, detail=str(e))
+    elif isinstance(e, PortInUseError):
+        return HTTPException(status_code=409, detail=str(e))
     elif isinstance(e, (ServerAlreadyRunningError, ServerNotRunningError, ValidationError)):
         return HTTPException(status_code=400, detail=str(e))
     else:
@@ -318,13 +370,54 @@ def get_server_stats(server_id: int):
 
 @app.get("/api/v1/health", tags=["System"])
 def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": "0.1.0"}
+    """Comprehensive health check endpoint."""
+    from msm_core.db import get_session, Server
+    from msm_core.console import get_console_manager
+
+    health = {
+        "status": "healthy",
+        "version": "0.1.0",
+        "uptime_seconds": None,
+        "servers": {
+            "total": 0,
+            "running": 0,
+        },
+        "checks": {
+            "database": False,
+            "console_manager": False,
+        },
+    }
+
+    # Calculate uptime
+    if _startup_time:
+        health["uptime_seconds"] = (datetime.utcnow() - _startup_time).total_seconds()
+
+    # Check database
+    try:
+        with get_session() as session:
+            servers = session.query(Server).all()
+            health["servers"]["total"] = len(servers)
+            health["servers"]["running"] = sum(1 for s in servers if s.is_running)
+            health["checks"]["database"] = True
+    except Exception as e:
+        health["status"] = "degraded"
+        health["checks"]["database_error"] = str(e)
+
+    # Check console manager
+    try:
+        console_manager = get_console_manager()
+        health["checks"]["console_manager"] = True
+        health["checks"]["active_consoles"] = len(console_manager._processes)
+    except Exception as e:
+        health["status"] = "degraded"
+        health["checks"]["console_manager_error"] = str(e)
+
+    return health
 
 
-@app.get("/", tags=["System"])
-def root():
-    """Root endpoint."""
+@app.get("/api/v1/info", tags=["System"])
+def api_info():
+    """API info endpoint."""
     return {
         "name": "MSM API",
         "version": "0.1.0",
@@ -794,3 +887,67 @@ def get_properties_schema():
     """Get the server.properties schema with types and defaults."""
     from msm_core.config_editor import get_property_schema
     return get_property_schema()
+
+
+# ============================================================================
+# Server Types and Versions Endpoints
+# ============================================================================
+
+@app.get("/api/v1/server-types", tags=["Servers"])
+def get_server_types():
+    """Get available server types with metadata."""
+    from msm_core.installers import get_server_types as do_get_types
+    return do_get_types()
+
+
+@app.get("/api/v1/versions/{server_type}", tags=["Servers"])
+def get_versions(server_type: str, include_snapshots: bool = False):
+    """Get available versions for a server type.
+
+    Args:
+        server_type: Type of server (paper, vanilla, fabric, purpur).
+        include_snapshots: Whether to include snapshot/unstable versions.
+    """
+    from msm_core.installers import get_available_versions
+
+    versions = get_available_versions(server_type, include_snapshots)
+    if not versions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No versions found for server type '{server_type}'"
+        )
+    return {"versions": versions, "server_type": server_type}
+
+
+# ============================================================================
+# Static Files and SPA Fallback
+# ============================================================================
+
+from pathlib import Path
+from fastapi.responses import FileResponse, HTMLResponse
+
+# Get the frontend dist directory
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+
+# Mount static assets if frontend is built
+if FRONTEND_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the SPA for all non-API routes."""
+        # Don't serve SPA for API routes
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Try to serve the requested file
+        file_path = FRONTEND_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+
+        # Otherwise serve index.html for SPA routing
+        index_path = FRONTEND_DIR / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+
+        raise HTTPException(status_code=404, detail="Frontend not built")
