@@ -118,7 +118,7 @@ export function Sidebar({ currentServer }: SidebarProps) {
       {/* Footer */}
       <div className="p-4 border-t border-card-border">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-foreground-muted uppercase tracking-wider">v0.2.0</span>
+          <span className="text-[10px] text-foreground-muted uppercase tracking-wider">v0.3.1</span>
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-online" />
             <span className="text-[10px] text-foreground-muted">API Connected</span>

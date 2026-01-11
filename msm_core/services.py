@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import subprocess
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,46 @@ from msm_core.db import get_session, Server
 from msm_core.exceptions import MSMError
 
 logger = logging.getLogger(__name__)
+
+
+def _is_running_as_root() -> bool:
+    """Check if the current process is running as root/Administrator.
+
+    Returns:
+        True if running as root (Unix) or Administrator (Windows).
+    """
+    if platform.system() == "Windows":
+        try:
+            # Windows: check if running as Administrator
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            return False
+    else:
+        # Unix: check effective UID
+        return os.geteuid() == 0
+
+
+def _check_root_safety(operation: str) -> None:
+    """Check if running as root and warn/fail for dangerous operations.
+
+    Args:
+        operation: Description of the operation being performed.
+
+    Raises:
+        ServiceError: If running as root and operation is dangerous.
+    """
+    if _is_running_as_root():
+        logger.warning(
+            f"SECURITY WARNING: {operation} is being run as root/Administrator. "
+            "This is dangerous as Minecraft servers should NOT run with elevated privileges. "
+            "A malicious plugin could compromise your entire system."
+        )
+        raise ServiceError(
+            f"Cannot {operation} as root/Administrator. "
+            "Minecraft servers should run as a non-privileged user. "
+            "Please run MSM as a regular user, not with sudo or as Administrator."
+        )
 
 
 class ServiceError(MSMError):
@@ -159,25 +200,57 @@ def get_service_name(server_name: str) -> str:
 def find_jar_file(server_path: Path) -> Optional[str]:
     """Find the server JAR file in a server directory.
 
+    Uses a smart heuristic:
+    1. Check for common server jar names first
+    2. Look for jars with Main-Class manifest entries
+    3. Exclude library jars (in lib/, libraries/, mods/)
+    4. Sort by file size (server jars are usually larger)
+
     Args:
         server_path: Path to server directory.
 
     Returns:
         JAR filename or None.
     """
-    # Common names
-    common_names = ["server.jar", "paper.jar", "fabric-server-launch.jar", "forge.jar"]
+    # Priority order of common server jar names
+    common_names = [
+        "server.jar",
+        "paper.jar",
+        "purpur.jar",
+        "spigot.jar",
+        "fabric-server-launch.jar",
+        "forge.jar",
+        "minecraft_server.jar",
+    ]
 
     for name in common_names:
         if (server_path / name).exists():
             return name
 
-    # Find any jar file
-    jar_files = list(server_path.glob("*.jar"))
-    if jar_files:
-        return jar_files[0].name
+    # Find all jar files in the root directory only (not subdirectories)
+    jar_files = [
+        f for f in server_path.glob("*.jar")
+        if f.is_file()
+    ]
 
-    return None
+    if not jar_files:
+        return None
+
+    # Try to find a jar with a manifest indicating it's runnable
+    for jar_path in jar_files:
+        try:
+            with zipfile.ZipFile(jar_path, 'r') as zf:
+                if 'META-INF/MANIFEST.MF' in zf.namelist():
+                    manifest = zf.read('META-INF/MANIFEST.MF').decode('utf-8', errors='ignore')
+                    if 'Main-Class' in manifest:
+                        # This jar is likely runnable
+                        return jar_path.name
+        except (zipfile.BadZipFile, OSError):
+            continue
+
+    # Fallback: return the largest jar (server jars are typically larger than libraries)
+    jar_files.sort(key=lambda f: f.stat().st_size, reverse=True)
+    return jar_files[0].name
 
 
 def create_systemd_service(server_id: int) -> dict:
@@ -190,10 +263,13 @@ def create_systemd_service(server_id: int) -> dict:
         Dictionary with service info.
 
     Raises:
-        ServiceError: If service creation fails.
+        ServiceError: If service creation fails or running as root.
     """
     if platform.system() != "Linux":
         raise ServiceError("systemd services are only available on Linux")
+
+    # SECURITY: Prevent creating services as root
+    _check_root_safety("create systemd service")
 
     with get_session() as session:
         server = session.query(Server).filter(Server.id == server_id).first()

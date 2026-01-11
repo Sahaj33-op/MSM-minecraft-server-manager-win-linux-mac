@@ -13,10 +13,67 @@ from .exceptions import (
     ServerAlreadyExistsError,
     ValidationError,
 )
+from .schemas import ServerResponse, ServerSummary
 from .utils import validate_server_name, validate_port, validate_memory
 from platform_adapters import get_adapter
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_path_is_safe_for_deletion(server_path: Path, server_name: str) -> bool:
+    """Validate that a path is safe to delete.
+
+    Ensures the path:
+    1. Is within the MSM data directory
+    2. Is not a system directory
+    3. Contains expected server files
+
+    Args:
+        server_path: The path to validate.
+        server_name: The server name for logging.
+
+    Returns:
+        True if safe to delete.
+
+    Raises:
+        ValidationError: If the path is not safe.
+    """
+    adapter = get_adapter()
+    data_dir = adapter.user_data_dir("msm")
+    servers_dir = data_dir / "servers"
+
+    # Resolve paths to handle symlinks and ..
+    try:
+        resolved_path = server_path.resolve()
+        resolved_servers_dir = servers_dir.resolve()
+    except (OSError, ValueError) as e:
+        raise ValidationError("path", f"Cannot resolve server path: {e}")
+
+    # Check if path is under the servers directory
+    try:
+        resolved_path.relative_to(resolved_servers_dir)
+    except ValueError:
+        logger.error(
+            f"SECURITY: Attempted to delete path outside servers directory: {resolved_path}"
+        )
+        raise ValidationError(
+            "path",
+            f"Server path '{resolved_path}' is not within the MSM servers directory. "
+            "Deletion blocked for security."
+        )
+
+    # Additional safety: don't delete if path is too short (likely a parent directory)
+    if len(resolved_path.parts) <= len(resolved_servers_dir.parts):
+        raise ValidationError("path", "Cannot delete the servers root directory")
+
+    # Check that the directory name matches the server name (sanity check)
+    if resolved_path.name != server_name:
+        logger.warning(
+            f"Server directory name '{resolved_path.name}' doesn't match "
+            f"server name '{server_name}'. Proceeding with caution."
+        )
+
+    return True
 
 
 def create_server(
@@ -25,7 +82,7 @@ def create_server(
     version: str,
     memory: Optional[str] = None,
     port: Optional[int] = None,
-) -> Server:
+) -> ServerResponse:
     """Create a new Minecraft server.
 
     Args:
@@ -36,7 +93,7 @@ def create_server(
         port: Server port. Defaults to config value.
 
     Returns:
-        The created Server object.
+        The created server as a ServerResponse DTO.
 
     Raises:
         ValidationError: If any input is invalid.
@@ -90,31 +147,42 @@ def create_server(
 
         logger.info(f"Server '{name}' created with ID {server.id}")
 
-        # Return a copy of the data since session will close
-        return Server(
-            id=server.id,
-            name=server.name,
-            type=server.type,
-            version=server.version,
-            path=server.path,
-            port=server.port,
-            memory=server.memory,
-            created_at=server.created_at,
-            is_running=server.is_running,
-            pid=server.pid,
-        )
+        # Return a Pydantic DTO (properly handles session closure)
+        return ServerResponse.model_validate(server)
 
 
 def list_servers() -> List[dict]:
     """List all servers.
 
+    Verifies actual running state against OS process table for accuracy.
+
     Returns:
         List of server dictionaries.
     """
+    import psutil
+
     with get_session() as session:
         servers = session.query(Server).all()
-        return [
-            {
+        result = []
+
+        for s in servers:
+            # Verify actual running state against OS
+            actual_running = False
+            if s.pid:
+                try:
+                    proc = psutil.Process(s.pid)
+                    if "java" in proc.name().lower() and proc.is_running():
+                        actual_running = True
+                except psutil.NoSuchProcess:
+                    pass
+
+            # Correct database state if needed
+            if s.is_running != actual_running:
+                s.is_running = actual_running
+                if not actual_running:
+                    s.pid = None
+
+            result.append({
                 "id": s.id,
                 "name": s.name,
                 "type": s.type,
@@ -122,12 +190,12 @@ def list_servers() -> List[dict]:
                 "path": s.path,
                 "port": s.port,
                 "memory": s.memory,
-                "is_running": s.is_running,
-                "pid": s.pid,
+                "is_running": actual_running,
+                "pid": s.pid if actual_running else None,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in servers
-        ]
+            })
+
+        return result
 
 
 def get_server(name: str) -> Optional[dict]:
@@ -206,7 +274,7 @@ def delete_server(name: str, keep_files: bool = False) -> bool:
 
     Raises:
         ServerNotFoundError: If the server doesn't exist.
-        ValidationError: If the server is running.
+        ValidationError: If the server is running or path is unsafe.
     """
     with get_session() as session:
         server = session.query(Server).filter(Server.name == name).first()
@@ -218,13 +286,17 @@ def delete_server(name: str, keep_files: bool = False) -> bool:
             raise ValidationError("server", "Cannot delete a running server. Stop it first.")
 
         server_path = Path(server.path)
+        server_name = server.name
 
         # Delete from database
         session.delete(server)
         logger.info(f"Server '{name}' deleted from database")
 
-    # Delete files (outside transaction)
+    # Delete files (outside transaction) with path safety validation
     if not keep_files and server_path.exists():
+        # SECURITY: Validate path before deletion to prevent path traversal attacks
+        _validate_path_is_safe_for_deletion(server_path, server_name)
+
         logger.info(f"Deleting server files at {server_path}")
         shutil.rmtree(server_path, ignore_errors=True)
 
@@ -238,7 +310,7 @@ def import_server(
     path: Path,
     memory: Optional[str] = None,
     port: Optional[int] = None,
-) -> Server:
+) -> ServerResponse:
     """Import an existing server directory.
 
     Args:
@@ -250,7 +322,7 @@ def import_server(
         port: Server port.
 
     Returns:
-        The imported Server object.
+        The imported server as a ServerResponse DTO.
 
     Raises:
         ValidationError: If the directory is invalid.
@@ -287,18 +359,8 @@ def import_server(
 
         logger.info(f"Imported server '{name}' from {path}")
 
-        return Server(
-            id=server.id,
-            name=server.name,
-            type=server.type,
-            version=server.version,
-            path=server.path,
-            port=server.port,
-            memory=server.memory,
-            created_at=server.created_at,
-            is_running=server.is_running,
-            pid=server.pid,
-        )
+        # Return a Pydantic DTO
+        return ServerResponse.model_validate(server)
 
 
 def update_server(

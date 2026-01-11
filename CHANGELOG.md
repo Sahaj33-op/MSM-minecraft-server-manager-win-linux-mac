@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-01-11
+
+### Security
+
+- **Root Privilege Protection** - Services cannot be created when running as root/Administrator
+  - Prevents Minecraft servers from running with elevated privileges
+  - Protects against malicious plugins compromising the system
+- **Path Traversal Prevention** - Server deletion validates paths are within MSM data directory
+  - Blocks attempts to delete files outside the servers folder
+  - Validates resolved paths to handle symlinks and `..` attacks
+- **Improved Server Name Validation** - Strict alphanumeric validation with path separator blocking
+
+### Changed
+
+- **State Synchronization** - OS process table is now the source of truth for server status
+  - `list_servers` verifies actual running state against OS on every call
+  - `get_server_status` reconciles DB state with OS reality
+  - Automatic correction when database and OS states differ
+- **Jar File Detection** - Smarter heuristic for finding server JAR files
+  - Checks for `Main-Class` manifest entries to identify runnable JARs
+  - Falls back to largest JAR file (server JARs are typically larger than libraries)
+  - Expanded list of common server jar names (purpur, spigot, minecraft_server)
+
+### Technical
+
+- Added `msm_core/schemas.py` with Pydantic DTOs for clean data transfer
+- Replaced detached ORM object pattern with `ServerResponse.model_validate()`
+- Added `_is_running_as_root()` and `_check_root_safety()` security helpers
+- Added `_validate_path_is_safe_for_deletion()` path containment check
+
 ## [0.3.0] - 2026-01-11
 
 ### Added

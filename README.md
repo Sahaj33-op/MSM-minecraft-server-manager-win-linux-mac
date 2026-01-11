@@ -1,10 +1,13 @@
 # MSM - Minecraft Server Manager
 
-A production-ready, cross-platform Minecraft server management solution featuring a powerful CLI and modern web dashboard.
+A cross-platform Minecraft server management solution featuring a powerful CLI and modern web dashboard.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
+![Status](https://img.shields.io/badge/status-Beta-yellow.svg)
+
+> **Note:** MSM is currently in **Beta**. Core features are functional but some advanced features are still under development. Please report any issues you encounter.
 
 ## Overview
 

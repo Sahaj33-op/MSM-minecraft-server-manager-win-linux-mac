@@ -219,6 +219,9 @@ def restart_server(server_id: int) -> bool:
 def get_server_status(server_id: int) -> dict:
     """Get the current status of a server.
 
+    This function queries the OS process table to verify the actual running state,
+    treating the OS as the source of truth rather than relying solely on the database.
+
     Args:
         server_id: The database ID of the server.
 
@@ -231,21 +234,45 @@ def get_server_status(server_id: int) -> dict:
         if not server:
             raise ServerNotFoundError(server_id)
 
+        # IMPORTANT: Verify actual running state against OS process table
+        # The OS is the source of truth, not the database
+        actual_running = False
+        if server.pid:
+            try:
+                proc = psutil.Process(server.pid)
+                # Verify it's actually a Java process (our server)
+                if "java" in proc.name().lower() and proc.is_running():
+                    actual_running = True
+            except psutil.NoSuchProcess:
+                pass
+
+        # Correct database state if it differs from reality
+        if server.is_running != actual_running:
+            logger.info(
+                f"State mismatch for server '{server.name}': "
+                f"DB says {'running' if server.is_running else 'stopped'}, "
+                f"OS says {'running' if actual_running else 'stopped'}. Correcting."
+            )
+            server.is_running = actual_running
+            if not actual_running:
+                server.pid = None
+                server.last_stopped = datetime.utcnow()
+
         status = {
             "id": server.id,
             "name": server.name,
             "type": server.type,
             "version": server.version,
             "port": server.port,
-            "is_running": server.is_running,
-            "pid": server.pid,
+            "is_running": actual_running,
+            "pid": server.pid if actual_running else None,
             "memory": server.memory,
             "last_started": server.last_started.isoformat() if server.last_started else None,
             "last_stopped": server.last_stopped.isoformat() if server.last_stopped else None,
         }
 
         # Get process stats if running
-        if server.is_running and server.pid:
+        if actual_running and server.pid:
             try:
                 proc = psutil.Process(server.pid)
                 with proc.oneshot():
@@ -256,11 +283,8 @@ def get_server_status(server_id: int) -> dict:
                         "uptime": (datetime.utcnow() - datetime.fromtimestamp(proc.create_time())).total_seconds(),
                     }
             except psutil.NoSuchProcess:
-                # Process died, update status
-                server.is_running = False
-                server.pid = None
-                status["is_running"] = False
-                status["pid"] = None
+                # Process died between our check and getting stats
+                pass
 
         return status
 
