@@ -244,36 +244,48 @@ Quote: "Pterodactyl is overkill, but I need more than Fork"
 
 # Part 4: Technical Architecture
 
-## Current State (Honest Assessment)
+## Current State (As of Phase 1 Completion)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CURRENT IMPLEMENTATION STATUS                 │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ✅ DONE (Solid Foundation)                                      │
+│  ✅ DONE (Production-Ready Core)                                │
 │  ├── Architecture: Core → Adapters → CLI/Web separation         │
-│  ├── Platform adapters: Windows/Linux/macOS scaffolding         │
-│  ├── CLI: Typer-based with server/web/platform commands         │
-│  ├── Database: SQLAlchemy 2.0 with Server model                 │
-│  ├── API: FastAPI with REST endpoints                           │
-│  ├── Frontend: React + Vite + Tailwind skeleton                 │
-│  └── Tooling: Poetry, pre-commit, mypy, ruff, black             │
+│  ├── Platform adapters: Windows/Linux/macOS with native paths   │
+│  ├── CLI: Typer-based with all commands implemented             │
+│  ├── Database: SQLAlchemy 2.0 with all models                   │
+│  ├── API: FastAPI with complete REST endpoints + WebSocket      │
+│  ├── Frontend: React + Vite + Tailwind with Dashboard/Console   │
+│  ├── Tooling: Poetry, pre-commit, mypy, ruff, black             │
+│  ├── Security: Path traversal prevention, root check, DTOs      │
+│  └── Testing: 50+ unit tests covering core functionality        │
 │                                                                  │
-│  ⚠️  PLACEHOLDER (Must Implement)                                │
-│  ├── installers.py - Returns True without downloading           │
-│  ├── backups.py - Empty placeholder                             │
-│  ├── plugins.py - Empty placeholder                             │
-│  ├── scheduler.py - Empty placeholder                           │
-│  ├── ws_console.py - Not connected to anything                  │
-│  └── Platform services (systemd/launchd/Windows services)       │
+│  ✅ IMPLEMENTED MODULES                                          │
+│  ├── installers.py - Paper, Vanilla, Fabric, Purpur downloads   │
+│  ├── backups.py - Full backup/restore/prune with compression    │
+│  ├── plugins.py - Modrinth/Hangar search and installation       │
+│  ├── scheduler.py - Cron-based task scheduling with croniter    │
+│  ├── ws_console.py - Real-time WebSocket console streaming      │
+│  ├── lifecycle.py - Server process management with psutil       │
+│  ├── config_editor.py - server.properties editor                │
+│  ├── java_manager.py - Java detection and Adoptium downloads    │
+│  └── monitor.py - System and process stats collection           │
 │                                                                  │
-│  🔴 CRITICAL BUGS                                                │
-│  ├── DB sessions not properly managed (detached objects)        │
-│  ├── Circular import risk (platform_adapters ↔ msm_core)        │
-│  ├── Global state initialized at import time                    │
-│  ├── Process state not synced on restart                        │
-│  └── Empty env dict replaces system environment                 │
+│  ✅ SECURITY FIXES (Recently Applied)                            │
+│  ├── Root privilege detection and blocking                      │
+│  ├── Path traversal prevention in server deletion               │
+│  ├── Pydantic DTOs for clean data serialization                 │
+│  ├── OS process table as source of truth (state sync)           │
+│  ├── Configurable CORS via environment variable                 │
+│  └── Async I/O for blocking operations (backups, downloads)     │
+│                                                                  │
+│  ⚠️  TODO (Future Enhancements)                                  │
+│  ├── Authentication (API key support exists, integration TBD)   │
+│  ├── Frontend: Backups/Plugins/Schedules/Java pages             │
+│  ├── Platform services (systemd/launchd/Windows services)       │
+│  └── Discord bot (optional module)                              │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -417,25 +429,23 @@ CREATE TABLE console_history (
 
 # Part 5: Implementation Roadmap
 
-## Phase 0: Foundation Fixes (Week 1)
+## Phase 0: Foundation Fixes ✅ COMPLETED
 
 **Goal:** Fix critical bugs before building more features.
 
-| Task | Priority | Est |
-|------|----------|-----|
-| Fix DB session management (context managers) | P0 | 2h |
-| Fix circular import (extract get_os_name) | P0 | 1h |
-| Lazy init for GLOBAL_DB, GLOBAL_CONFIG | P0 | 2h |
-| Process state reconciliation on startup | P0 | 2h |
-| Fix empty env dict in start_process | P0 | 30m |
-| Add proper exception hierarchy | P1 | 2h |
-| Replace print() with logging | P1 | 2h |
-| Add input validation (server names) | P1 | 1h |
-| Add adapter singleton pattern | P2 | 1h |
+| Task | Priority | Status |
+|------|----------|--------|
+| Fix DB session management (context managers) | P0 | ✅ Done |
+| Fix circular import (extract get_os_name) | P0 | ✅ Done |
+| Lazy init for GLOBAL_DB, GLOBAL_CONFIG | P0 | ✅ Done |
+| Process state reconciliation on startup | P0 | ✅ Done |
+| Fix empty env dict in start_process | P0 | ✅ Done |
+| Add proper exception hierarchy | P1 | ✅ Done |
+| Replace print() with logging | P1 | ✅ Done |
+| Add input validation (server names) | P1 | ✅ Done |
+| Add adapter singleton pattern | P2 | ✅ Done |
 
-**TOTAL: ~14h**
-
-## Phase 1: Core Features (Weeks 2-3)
+## Phase 1: Core Features ✅ COMPLETED
 
 **Goal:** Achieve basic feature parity with Fork.
 
@@ -1310,35 +1320,39 @@ from the HN community, especially on the API design.
 
 # Part 11: Immediate Next Actions
 
-## This Week
+## Completed ✅
 
 ```bash
-# Priority order - do these first
+# All Phase 0 and Phase 1 tasks completed:
 
-□ 1. Fix DB session management (context managers)
-     File: msm_core/db.py
-
-□ 2. Implement Paper download in installers.py
-     File: msm_core/installers.py
-     API: https://api.papermc.io/v2
-
-□ 3. Connect WebSocket console to process stdout
-     Files: web/backend/ws_console.py, web/backend/app.py
-
-□ 4. Add server delete command
-     File: cli/main.py
-
-□ 5. Fix circular import
-     Move get_os_name() to standalone module
+✅ Fix DB session management (context managers)
+✅ Implement Paper/Vanilla/Fabric/Purpur installers
+✅ Connect WebSocket console to process stdout
+✅ Add server delete and import commands
+✅ Fix circular imports
+✅ Implement backups system
+✅ Implement plugins system
+✅ Implement scheduler system
+✅ Security hardening (root check, path traversal, DTOs)
+✅ Async I/O for blocking operations
+✅ Configurable CORS
+✅ Test coverage for backups, plugins, scheduler
 ```
 
-## This Month
+## Current Focus (Phase 2-3)
 
 ```
-Week 1: Foundation fixes + Paper installer
-Week 2: Console streaming + Vanilla installer
-Week 3: Backup system + Server import
-Week 4: Frontend create form + Console viewer
+□ 1. Frontend pages for Backups/Plugins/Schedules/Java
+     Files: web/frontend/src/pages/
+
+□ 2. Authentication integration
+     Files: web/backend/auth.py, web/backend/app.py
+
+□ 3. Platform services (systemd, launchd, Windows service)
+     Files: platform_adapters/*_adapter.py
+
+□ 4. Documentation
+     Files: docs/API.md, docs/CLI.md, docs/USER_GUIDE.md
 ```
 
 ## Before First Public Release

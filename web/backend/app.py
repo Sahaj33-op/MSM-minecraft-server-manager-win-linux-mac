@@ -1,9 +1,12 @@
 """MSM Web Backend - FastAPI Application."""
+import asyncio
 import logging
 import signal
 import sys
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import partial
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -12,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from msm_core import api
+from msm_core.config import MSMConfig
 from msm_core.lifecycle import (
     start_server,
     stop_server,
@@ -108,14 +112,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware - restrict in production
+# CORS middleware - configurable via MSM_CORS_ORIGINS env var or config file
+cors_origins = MSMConfig.get_cors_origins()
+logger.info(f"CORS origins configured: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5000", "http://127.0.0.1:5173", "http://127.0.0.1:5000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Thread pool for blocking I/O operations
+_executor: Optional[ThreadPoolExecutor] = None
+
+
+def get_executor() -> ThreadPoolExecutor:
+    """Get the shared thread pool executor for blocking operations."""
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="msm-io")
+    return _executor
+
+
+async def run_in_executor(func, *args):
+    """Run a blocking function in the thread pool executor.
+
+    Use this for I/O-bound operations like file operations, backups, etc.
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(get_executor(), partial(func, *args))
 
 
 # ============================================================================
@@ -194,15 +221,21 @@ def get_servers():
 
 
 @app.post("/api/v1/servers", tags=["Servers"])
-def create_server(req: CreateServerRequest):
-    """Create a new server."""
+async def create_server(req: CreateServerRequest):
+    """Create a new server.
+
+    This operation downloads server JAR files and is run in a thread pool
+    to avoid blocking other requests.
+    """
     try:
-        server = api.create_server(
-            name=req.name,
-            server_type=req.type,
-            version=req.version,
-            memory=req.memory,
-            port=req.port,
+        # Run in executor as this downloads files (I/O bound)
+        server = await run_in_executor(
+            api.create_server,
+            req.name,
+            req.type,
+            req.version,
+            req.memory,
+            req.port,
         )
         return {
             "id": server.id,
@@ -259,14 +292,18 @@ def update_server(server_id: int, req: UpdateServerRequest):
 
 
 @app.delete("/api/v1/servers/{server_id}", tags=["Servers"])
-def delete_server(server_id: int, keep_files: bool = False):
-    """Delete a server."""
+async def delete_server(server_id: int, keep_files: bool = False):
+    """Delete a server.
+
+    File deletion is run in thread pool to avoid blocking.
+    """
     try:
         server = api.get_server_by_id(server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
 
-        api.delete_server(server["name"], keep_files=keep_files)
+        # Run in executor as this may delete large directories
+        await run_in_executor(api.delete_server, server["name"], keep_files)
         return {"status": "deleted", "name": server["name"]}
     except MSMError as e:
         raise handle_msm_error(e)
@@ -507,8 +544,11 @@ def list_server_backups(server_id: int):
 
 
 @app.post("/api/v1/servers/{server_id}/backups", tags=["Backups"])
-def create_backup(server_id: int, req: CreateBackupRequest = None):
-    """Create a backup of a server."""
+async def create_backup(server_id: int, req: CreateBackupRequest = None):
+    """Create a backup of a server.
+
+    Backup compression is run in thread pool to avoid blocking.
+    """
     from msm_core.backups import create_backup as do_create_backup
 
     try:
@@ -517,10 +557,12 @@ def create_backup(server_id: int, req: CreateBackupRequest = None):
             raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
 
         req = req or CreateBackupRequest()
-        result = do_create_backup(
-            server_id=server_id,
-            stop_first=req.stop_first,
-            backup_type=req.backup_type,
+        # Run in executor as backup compression is I/O intensive
+        result = await run_in_executor(
+            do_create_backup,
+            server_id,
+            req.stop_first,
+            req.backup_type,
         )
         return result
     except MSMError as e:
@@ -539,35 +581,39 @@ def get_backup(backup_id: int):
 
 
 @app.post("/api/v1/backups/{backup_id}/restore", tags=["Backups"])
-def restore_backup(backup_id: int):
-    """Restore a server from backup."""
+async def restore_backup(backup_id: int):
+    """Restore a server from backup.
+
+    Backup extraction is run in thread pool to avoid blocking.
+    """
     from msm_core.backups import restore_backup as do_restore
 
     try:
-        do_restore(backup_id)
+        # Run in executor as extraction is I/O intensive
+        await run_in_executor(do_restore, backup_id)
         return {"status": "restored", "backup_id": backup_id}
     except MSMError as e:
         raise handle_msm_error(e)
 
 
 @app.delete("/api/v1/backups/{backup_id}", tags=["Backups"])
-def delete_backup(backup_id: int, delete_file: bool = True):
+async def delete_backup(backup_id: int, delete_file: bool = True):
     """Delete a backup."""
     from msm_core.backups import delete_backup as do_delete
 
     try:
-        do_delete(backup_id, delete_file=delete_file)
+        await run_in_executor(do_delete, backup_id, delete_file)
         return {"status": "deleted", "backup_id": backup_id}
     except MSMError as e:
         raise handle_msm_error(e)
 
 
 @app.post("/api/v1/backups/prune", tags=["Backups"])
-def prune_backups(server_id: Optional[int] = None, keep_count: int = 5, keep_days: Optional[int] = None):
+async def prune_backups(server_id: Optional[int] = None, keep_count: int = 5, keep_days: Optional[int] = None):
     """Prune old backups."""
     from msm_core.backups import prune_backups as do_prune
 
-    deleted = do_prune(server_id, keep_count=keep_count, keep_days=keep_days)
+    deleted = await run_in_executor(do_prune, server_id, keep_count, keep_days)
     return {"deleted_count": deleted}
 
 
@@ -611,8 +657,11 @@ def list_server_plugins(server_id: int):
 
 
 @app.post("/api/v1/servers/{server_id}/plugins", tags=["Plugins"])
-def install_plugin(server_id: int, req: InstallPluginRequest):
-    """Install a plugin on a server."""
+async def install_plugin(server_id: int, req: InstallPluginRequest):
+    """Install a plugin on a server.
+
+    Plugin download is run in thread pool to avoid blocking.
+    """
     from msm_core.plugins import install_from_modrinth, install_from_url
 
     try:
@@ -621,14 +670,16 @@ def install_plugin(server_id: int, req: InstallPluginRequest):
             raise HTTPException(status_code=404, detail=f"Server with ID {server_id} not found")
 
         if req.source == "modrinth" and req.project_id:
-            result = install_from_modrinth(
-                server_id=server_id,
-                project_id=req.project_id,
-                version_id=req.version_id,
-                mc_version=server["version"],
+            # Run in executor as this downloads files
+            result = await run_in_executor(
+                install_from_modrinth,
+                server_id,
+                req.project_id,
+                req.version_id,
+                server["version"],
             )
         elif req.source == "url" and req.url:
-            result = install_from_url(server_id=server_id, url=req.url)
+            result = await run_in_executor(install_from_url, server_id, req.url)
         else:
             raise HTTPException(status_code=400, detail="Invalid installation request")
 
@@ -827,12 +878,16 @@ def list_available_java():
 
 
 @app.post("/api/v1/java/install/{version}", tags=["Java"])
-def install_java(version: int):
-    """Download and install a Java runtime."""
+async def install_java(version: int):
+    """Download and install a Java runtime.
+
+    Java download and extraction is run in thread pool to avoid blocking.
+    """
     from msm_core.java_manager import download_java
 
     try:
-        result = download_java(version)
+        # Run in executor as this downloads and extracts large files
+        result = await run_in_executor(download_java, version)
         return result
     except MSMError as e:
         raise handle_msm_error(e)

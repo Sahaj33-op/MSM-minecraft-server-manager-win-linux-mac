@@ -1,8 +1,9 @@
 """Configuration management for MSM."""
 import json
 import logging
+import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,12 +15,48 @@ class MSMConfig(BaseModel):
 
     data_dir: str = Field(default="~/.msm", description="Root directory for MSM data")
     default_java_memory: str = Field(default="2G", description="Default memory for servers")
+
     default_port: int = Field(default=25565, description="Default server port")
+
+    @property
+    def servers_dir(self) -> str:
+        """Get the servers directory (derived from data_dir)."""
+        return str(Path(self.data_dir).expanduser() / "servers")
+
     web_host: str = Field(default="127.0.0.1", description="Web UI bind address")
     web_port: int = Field(default=5000, description="Web UI port")
     log_level: str = Field(default="INFO", description="Logging level")
     auto_accept_eula: bool = Field(default=True, description="Automatically accept Minecraft EULA")
     check_java_on_startup: bool = Field(default=True, description="Check Java availability on startup")
+
+    # CORS configuration - can be overridden via MSM_CORS_ORIGINS environment variable
+    cors_origins: List[str] = Field(
+        default=[
+            "http://localhost:5173",
+            "http://localhost:5000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5000",
+        ],
+        description="Allowed CORS origins for the API"
+    )
+
+    @classmethod
+    def get_cors_origins(cls) -> List[str]:
+        """Get CORS origins from environment variable or config.
+
+        Environment variable MSM_CORS_ORIGINS takes precedence.
+        Format: comma-separated list of origins.
+        Use '*' for allow all (not recommended for production).
+
+        Returns:
+            List of allowed origins.
+        """
+        env_origins = os.environ.get("MSM_CORS_ORIGINS")
+        if env_origins:
+            if env_origins.strip() == "*":
+                return ["*"]
+            return [origin.strip() for origin in env_origins.split(",") if origin.strip()]
+        return get_config().cors_origins
 
 
 class ConfigManager:
