@@ -30,7 +30,7 @@ def test_db():
         pass
 
 
-from cli.main import app
+from cli.main import app  # noqa: E402
 
 runner = CliRunner()
 

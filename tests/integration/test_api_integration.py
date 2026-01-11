@@ -1,6 +1,5 @@
 import pytest
 import tempfile
-import os
 from pathlib import Path
 from fastapi.testclient import TestClient
 
@@ -41,7 +40,7 @@ def setup_test_db(test_db):
     yield
 
 
-from web.backend.app import app
+from web.backend.app import app  # noqa: E402
 
 client = TestClient(app)
 

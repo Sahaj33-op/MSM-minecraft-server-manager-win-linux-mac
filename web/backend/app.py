@@ -1,15 +1,13 @@
 """MSM Web Backend - FastAPI Application."""
 import asyncio
 import logging
-import signal
-import sys
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -978,8 +976,8 @@ def get_versions(server_type: str, include_snapshots: bool = False):
 # Static Files and SPA Fallback
 # ============================================================================
 
-from pathlib import Path
-from fastapi.responses import FileResponse, HTMLResponse
+from pathlib import Path  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
 
 # Get the frontend dist directory
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"

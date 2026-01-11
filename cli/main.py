@@ -11,7 +11,7 @@ from rich.logging import RichHandler
 
 from msm_core import api
 from msm_core.lifecycle import start_server, stop_server, restart_server, sync_server_states, get_server_status
-from msm_core.exceptions import MSMError, ServerNotFoundError, ValidationError
+from msm_core.exceptions import MSMError, ServerNotFoundError
 from msm_core.installers import get_available_versions
 
 # Setup logging
@@ -80,7 +80,7 @@ def create_server_cmd(
     """Create a new Minecraft server."""
     try:
         with console.status(f"Creating {server_type} server '{name}'..."):
-            server = api.create_server(name, server_type, version, memory, port)
+            api.create_server(name, server_type, version, memory, port)
 
         console.print(f"[green]✓[/green] Server '[bold]{name}[/bold]' created successfully!")
         console.print(f"  Type: {server_type}")
@@ -262,7 +262,7 @@ def import_server_cmd(
 ):
     """Import an existing server directory."""
     try:
-        server = api.import_server(name, server_type, version, path, memory, port)
+        api.import_server(name, server_type, version, path, memory, port)
         console.print(f"[green]✓[/green] Server '[bold]{name}[/bold]' imported from {path}")
 
     except Exception as e:
@@ -303,8 +303,6 @@ def console_cmd(name: str = typer.Argument(..., help="Server name")):
     """
     from msm_core.console import get_console_manager
     from msm_core.lifecycle import send_command
-    import threading
-    import time
 
     try:
         server = api.get_server(name)
@@ -377,7 +375,7 @@ def send_cmd(
         if lifecycle_send_command(server["id"], command):
             console.print(f"[green]✓[/green] Sent command: {command}")
         else:
-            console.print(f"[red]Error:[/red] Failed to send command")
+            console.print("[red]Error:[/red] Failed to send command")
             raise typer.Exit(1)
 
     except Exception as e:
@@ -496,7 +494,7 @@ def backup_restore_cmd(
 
         if not force:
             confirm = typer.confirm(
-                f"This will overwrite the server files. Continue?"
+                "This will overwrite the server files. Continue?"
             )
             if not confirm:
                 console.print("Cancelled.")
@@ -505,7 +503,7 @@ def backup_restore_cmd(
         with console.status("Restoring backup..."):
             restore_backup(backup_id)
 
-        console.print(f"[green]✓[/green] Backup restored successfully!")
+        console.print("[green]✓[/green] Backup restored successfully!")
 
     except Exception as e:
         handle_error(e)
@@ -533,7 +531,7 @@ def backup_delete_cmd(
                 raise typer.Exit(0)
 
         delete_backup(backup_id, delete_file=not keep_file)
-        console.print(f"[green]✓[/green] Backup deleted.")
+        console.print("[green]✓[/green] Backup deleted.")
 
     except Exception as e:
         handle_error(e)
@@ -626,7 +624,7 @@ def plugin_install_cmd(
         if not server:
             raise ServerNotFoundError(name)
 
-        with console.status(f"Installing plugin..."):
+        with console.status("Installing plugin..."):
             if plugin.startswith("modrinth:"):
                 project_id = plugin[9:]
                 result = install_from_modrinth(server["id"], project_id, mc_version=server["version"])
@@ -912,7 +910,7 @@ def schedule_delete_cmd(
                 raise typer.Exit(0)
 
         delete_schedule(schedule_id)
-        console.print(f"[green]✓[/green] Schedule deleted.")
+        console.print("[green]✓[/green] Schedule deleted.")
 
     except Exception as e:
         handle_error(e)
@@ -934,7 +932,7 @@ def schedule_enable_cmd(schedule_id: int = typer.Argument(..., help="Schedule ID
             return
 
         result = update_schedule(schedule_id, enabled=True)
-        console.print(f"[green]✓[/green] Schedule enabled.")
+        console.print("[green]✓[/green] Schedule enabled.")
         if result["next_run"]:
             console.print(f"  Next run: {result['next_run']}")
 
@@ -958,7 +956,7 @@ def schedule_disable_cmd(schedule_id: int = typer.Argument(..., help="Schedule I
             return
 
         update_schedule(schedule_id, enabled=False)
-        console.print(f"[green]✓[/green] Schedule disabled.")
+        console.print("[green]✓[/green] Schedule disabled.")
 
     except Exception as e:
         handle_error(e)
@@ -1099,7 +1097,7 @@ def java_remove_cmd(
                 raise typer.Exit(0)
 
         delete_managed_java(path)
-        console.print(f"[green]✓[/green] Java installation removed.")
+        console.print("[green]✓[/green] Java installation removed.")
 
     except Exception as e:
         handle_error(e)
@@ -1121,7 +1119,7 @@ def start_web_cmd(
     # Sync server states on startup
     sync_server_states()
 
-    console.print(f"[green]Starting MSM Web Dashboard[/green]")
+    console.print("[green]Starting MSM Web Dashboard[/green]")
     console.print(f"  URL: [cyan]http://{host}:{port}[/cyan]")
     console.print("  Press Ctrl+C to stop\n")
 

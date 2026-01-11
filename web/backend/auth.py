@@ -1,13 +1,11 @@
 """API authentication for MSM web backend."""
 import hashlib
-import hmac
 import logging
 import secrets
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Security
+from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader, APIKeyQuery
 from pydantic import BaseModel
 
@@ -175,7 +173,7 @@ def validate_api_key(key: str) -> Optional[dict]:
         api_key = (
             session.query(APIKey)
             .filter(APIKey.key_hash == key_hash)
-            .filter(APIKey.is_active == True)
+            .filter(APIKey.is_active.is_(True))
             .first()
         )
 

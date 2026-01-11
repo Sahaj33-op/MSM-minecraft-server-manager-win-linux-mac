@@ -2,7 +2,7 @@
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 from croniter import croniter
@@ -344,7 +344,7 @@ class SchedulerService:
         with get_session() as session:
             due_schedules = (
                 session.query(Schedule)
-                .filter(Schedule.enabled == True)
+                .filter(Schedule.enabled.is_(True))
                 .filter(Schedule.next_run <= now)
                 .all()
             )

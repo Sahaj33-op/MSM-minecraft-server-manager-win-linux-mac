@@ -301,7 +301,7 @@ def sync_server_states() -> int:
     corrected = 0
 
     with get_session() as session:
-        servers = session.query(Server).filter(Server.is_running == True).all()
+        servers = session.query(Server).filter(Server.is_running.is_(True)).all()
 
         for server in servers:
             if server.pid:

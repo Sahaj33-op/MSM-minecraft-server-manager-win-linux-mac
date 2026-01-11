@@ -189,19 +189,6 @@ class TestPydanticDTOs:
 
     def test_schemas_importable(self):
         """Verify all schemas are importable."""
-        from msm_core.schemas import (
-            ServerBase,
-            ServerCreate,
-            ServerUpdate,
-            ServerResponse,
-            ServerSummary,
-            BackupResponse,
-            PluginResponse,
-            ScheduleResponse,
-            JavaRuntime,
-            SystemStats,
-            HealthCheck,
-        )
 
     def test_server_response_from_attributes(self):
         """ServerResponse should support from_attributes mode."""

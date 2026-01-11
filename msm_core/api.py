@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from .db import get_session, get_db, Server
+from .db import get_session, Server
 from .config import get_config
 from .lifecycle import start_server, stop_server, sync_server_states
 from .installers import install_server
@@ -13,7 +13,7 @@ from .exceptions import (
     ServerAlreadyExistsError,
     ValidationError,
 )
-from .schemas import ServerResponse, ServerSummary
+from .schemas import ServerResponse
 from .utils import validate_server_name, validate_port, validate_memory
 from platform_adapters import get_adapter
 

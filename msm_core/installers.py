@@ -163,7 +163,7 @@ def install_vanilla(version: str, install_dir: Path) -> bool:
             return False
 
         download_url = server_info["url"]
-        sha1 = server_info.get("sha1")  # Mojang uses SHA1
+        _sha1 = server_info.get("sha1")  # Mojang uses SHA1 (unused, kept for future verification)
 
         # Download the JAR
         jar_path = install_dir / "server.jar"
@@ -268,7 +268,7 @@ def install_purpur(version: str, install_dir: Path) -> bool:
         response.raise_for_status()
         build_data = response.json()
 
-        md5 = build_data.get("md5")
+        _md5 = build_data.get("md5")  # Unused, kept for future verification
 
         # Download URL
         download_url = f"{PURPUR_API}/purpur/{version}/{latest_build}/download"

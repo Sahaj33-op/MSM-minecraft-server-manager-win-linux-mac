@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 
 # Re-export from platform module for backwards compatibility
-from msm_core.platform import get_os_name, get_arch, is_windows, is_linux, is_macos
 
 from .exceptions import ValidationError
 

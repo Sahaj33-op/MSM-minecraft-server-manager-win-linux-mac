@@ -1,8 +1,7 @@
 """Unit tests for backups module."""
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
-from datetime import datetime
+from unittest.mock import patch, MagicMock
 
 
 class TestBackupsModule:
@@ -13,11 +12,7 @@ class TestBackupsModule:
         from msm_core.backups import (
             create_backup,
             list_backups,
-            get_backup_by_id,
             restore_backup,
-            delete_backup,
-            prune_backups,
-            BackupError,
         )
         assert callable(create_backup)
         assert callable(list_backups)

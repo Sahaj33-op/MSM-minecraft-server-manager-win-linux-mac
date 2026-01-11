@@ -38,7 +38,7 @@ export function useConsoleWebSocket(serverId: number | null) {
   const [serverStopped, setServerStopped] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intentionalCloseRef = useRef(false);
 
   const connect = useCallback(() => {

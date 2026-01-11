@@ -1,5 +1,4 @@
 """Background task management for MSM - handles periodic tasks and cleanup."""
-import asyncio
 import logging
 import threading
 import time
@@ -113,7 +112,7 @@ def sync_server_states_task() -> None:
     corrected = 0
 
     with get_session() as session:
-        servers = session.query(Server).filter(Server.is_running == True).all()
+        servers = session.query(Server).filter(Server.is_running.is_(True)).all()
 
         for server in servers:
             if server.pid:

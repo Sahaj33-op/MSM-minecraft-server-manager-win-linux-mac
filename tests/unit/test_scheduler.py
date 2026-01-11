@@ -12,11 +12,8 @@ class TestSchedulerModule:
         from msm_core.scheduler import (
             create_schedule,
             list_schedules,
-            get_schedule_by_id,
             update_schedule,
-            delete_schedule,
             calculate_next_run,
-            SchedulerError,
         )
         assert callable(create_schedule)
         assert callable(list_schedules)

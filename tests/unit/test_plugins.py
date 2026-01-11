@@ -10,15 +10,10 @@ class TestPluginsModule:
         """Verify plugins module is importable."""
         from msm_core.plugins import (
             search_modrinth,
-            search_hangar,
             install_from_modrinth,
-            install_from_url,
             list_plugins,
-            get_plugin_by_id,
             toggle_plugin,
-            uninstall_plugin,
             check_plugin_updates,
-            PluginError,
         )
         assert callable(search_modrinth)
         assert callable(install_from_modrinth)

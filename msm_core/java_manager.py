@@ -243,7 +243,7 @@ def get_best_java_for_version(mc_version: str, installed_javas: Optional[List[Di
     # Parse Minecraft version
     try:
         parts = mc_version.split(".")
-        mc_major = int(parts[0])
+        _mc_major = int(parts[0])  # Reserved for future use
         mc_minor = int(parts[1]) if len(parts) > 1 else 0
         mc_patch = int(parts[2]) if len(parts) > 2 else 0
     except (ValueError, IndexError):
@@ -351,7 +351,7 @@ def download_java(version: int, install_dir: Optional[Path] = None) -> Dict:
 
         download_url = package.get("link")
         filename = package.get("name")
-        checksum = package.get("checksum")
+        _checksum = package.get("checksum")  # Unused, kept for future verification
 
         if not download_url:
             raise JavaError("No download URL found")
